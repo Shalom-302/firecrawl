@@ -46,6 +46,10 @@ x-common-env: &common-env
 services:
   api:
     <<: *common-service
+    # Réseau Traefik (Dokploy) EN PLUS du réseau interne backend.
+    networks:
+      - backend
+      - dokploy-network
     environment:
       <<: *common-env
       HOST: "0.0.0.0"
@@ -64,8 +68,19 @@ services:
         condition: service_healthy
       nuq-postgres:
         condition: service_healthy
-    ports:
-      - "3002:3002"
+    # PAS de `ports:` exposé sur l'hôte : l'API n'est joignable QUE via Traefik
+    # (avec Basic Auth ci-dessous), sinon l'IP:3002 contournerait l'auth.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      # Router HTTPS sur le domaine public
+      - "traefik.http.routers.firecrawl.rule=Host(`firecrawl.kortexai.dev`)"
+      - "traefik.http.routers.firecrawl.entrypoints=websecure"
+      - "traefik.http.routers.firecrawl.tls.certresolver=letsencrypt"
+      - "traefik.http.services.firecrawl.loadbalancer.server.port=3002"
+      # Basic Auth : user=tekawake (le `$` est doublé en `$$` pour Docker)
+      - "traefik.http.routers.firecrawl.middlewares=firecrawl-auth"
+      - "traefik.http.middlewares.firecrawl-auth.basicauth.users=tekawake:$$apr1$$aW9tcXw9$$sP9yGO83skw7GdV72If3B/"
 
   playwright-service:
     image: ghcr.io/firecrawl/playwright-service:latest
@@ -128,6 +143,9 @@ services:
 networks:
   backend:
     driver: bridge
+  # Réseau partagé créé par Dokploy (Traefik y est branché).
+  dokploy-network:
+    external: true
 
 volumes:
   nuq-pgdata:
