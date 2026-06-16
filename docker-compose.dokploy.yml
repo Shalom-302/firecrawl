@@ -63,7 +63,7 @@ services:
       rabbitmq:
         condition: service_healthy
       nuq-postgres:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "3002:3002"
 
@@ -114,6 +114,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
     volumes:
       - nuq-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # api/workers ne démarrent qu'une fois Postgres prêt à accepter des
+      # connexions (sinon EAI_AGAIN/ECONNREFUSED → le harness tue tout).
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
     networks:
       - backend
 
