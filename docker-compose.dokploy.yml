@@ -94,11 +94,13 @@ services:
     restart: unless-stopped
     command: rabbitmq-server
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      # RabbitMQ met souvent 40-60s à démarrer : fenêtre large pour éviter
+      # le "unhealthy" prématuré qui bloquait le service api (depends_on).
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
     networks:
       - backend
 
