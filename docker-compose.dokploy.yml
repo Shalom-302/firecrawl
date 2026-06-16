@@ -1,0 +1,123 @@
+# Compose Firecrawl en mode PULL pour Dokploy.
+# Aucune image n'est buildée sur le VPS : l'API vient du fork (GHCR),
+# playwright-service et nuq-postgres des images officielles Firecrawl,
+# redis/rabbitmq des images publiques. FoundationDB retiré (backend NUQ = postgres).
+name: firecrawl
+
+x-common-service: &common-service
+  image: ghcr.io/shalom-302/firecrawl:latest
+  pull_policy: always
+  restart: unless-stopped
+  networks:
+    - backend
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  ulimits:
+    nofile:
+      soft: 65535
+      hard: 65535
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-common-env: &common-env
+  REDIS_URL: redis://redis:6379
+  REDIS_RATE_LIMIT_URL: redis://redis:6379
+  PLAYWRIGHT_MICROSERVICE_URL: http://playwright-service:3000/scrape
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  POSTGRES_DB: ${POSTGRES_DB:-postgres}
+  POSTGRES_HOST: nuq-postgres
+  POSTGRES_PORT: "5432"
+  NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
+  USE_DB_AUTHENTICATION: "false"
+  # Clé d'API simple : tout appel doit envoyer  Authorization: Bearer <clé>.
+  # Mets une vraie valeur dans les variables d'env Dokploy (sinon API ouverte).
+  BULL_AUTH_KEY: ${BULL_AUTH_KEY:-}
+  TEST_API_KEY: ${TEST_API_KEY:-}
+  LOGGING_LEVEL: ${LOGGING_LEVEL:-INFO}
+  # LLM (optionnel : nécessaire seulement pour /extract et le LLM-scraping).
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  MODEL_NAME: ${MODEL_NAME:-}
+
+services:
+  api:
+    <<: *common-service
+    environment:
+      <<: *common-env
+      HOST: "0.0.0.0"
+      PORT: "3002"
+      WORKER_PORT: "3005"
+      EXTRACT_WORKER_PORT: "3004"
+      HARNESS_STARTUP_TIMEOUT_MS: "120000"
+      ENV: local
+    command: node dist/src/harness.js --start-docker
+    depends_on:
+      redis:
+        condition: service_started
+      playwright-service:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      nuq-postgres:
+        condition: service_started
+    ports:
+      - "3002:3002"
+
+  playwright-service:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      MAX_CONCURRENT_PAGES: "10"
+    networks:
+      - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    command: redis-server --bind 0.0.0.0
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    command: rabbitmq-server
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend
+
+  nuq-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - nuq-pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  nuq-pgdata:
