@@ -25,6 +25,8 @@ concurrency:
   group: firecrawl-api-image
   cancel-in-progress: true
 
+# (re-trigger build après activation des Actions du fork)
+
 permissions:
   contents: read
   packages: write
